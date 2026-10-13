@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <meta charset="utf-8">
+  <style>
+    :root { --bg:#f6f7fb; --card:#fff; --text:#1d1d24; --muted:#6b6b78; --line:#e4e5ec; --accent:#1f5eff; --accent-soft:#e8eeff; --err:#c62828; }
+    * { box-sizing:border-box; }
+    body { margin:0; background:var(--bg); color:var(--text); font:15px/1.5 "Segoe UI", system-ui, -apple-system, sans-serif; }
+    .wrap { max-width:760px; margin:0 auto; padding:32px 16px 48px; }
+    .card { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:24px; }
+    h1 { font-size:22px; margin:0 0 4px; }
+    .sub { color:var(--muted); margin:0 0 20px; }
+    h2 { font-size:15px; margin:22px 0 10px; }
+    .days { display:flex; gap:8px; overflow-x:auto; padding-bottom:6px; }
+    .day { flex:0 0 auto; border:1px solid var(--line); background:#fff; border-radius:10px; padding:8px 12px; cursor:pointer; text-align:center; min-width:76px; font:inherit; color:inherit; }
+    .day b { display:block; font-size:17px; }
+    .day small { color:var(--muted); font-size:12px; }
+    .day.on { border-color:var(--accent); background:var(--accent-soft); }
+    .times { display:grid; grid-template-columns:repeat(auto-fill, minmax(92px, 1fr)); gap:8px; }
+    .time { border:1px solid var(--line); background:#fff; border-radius:8px; padding:9px 0; cursor:pointer; font:inherit; color:inherit; }
+    .time:hover { border-color:var(--accent); }
+    .time.on { background:var(--accent); border-color:var(--accent); color:#fff; font-weight:600; }
+    label { display:block; font-weight:600; font-size:13px; margin:14px 0 5px; }
+    input, textarea { width:100%; padding:10px 12px; border:1px solid var(--line); border-radius:8px; font:inherit; }
+    textarea { min-height:80px; resize:vertical; }
+    .hp { position:absolute; left:-9999px; }
+    .btn { margin-top:18px; width:100%; padding:13px; border:0; border-radius:10px; background:var(--accent); color:#fff; font-weight:600; font-size:15px; font-family:inherit; cursor:pointer; }
+    .btn:disabled { opacity:.55; cursor:default; }
+    .pick { background:var(--accent-soft); border-radius:8px; padding:10px 12px; margin-top:18px; }
+    .msg { color:var(--muted); padding:20px 0; }
+    .err { color:var(--err); margin-top:12px; }
+    .done { text-align:center; padding:30px 10px; }
+    .done .tick { font-size:42px; }
+    .hidden { display:none; }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <div class="card" id="main">
+    <h1 id="title"></h1>
+    <p class="sub" id="sub"></p>
+
+    <div id="loading" class="msg">Loading available times...</div>
+    <div id="picker" class="hidden">
+      <h2>1. Choose a day</h2>
+      <div class="days" id="days"></div>
+      <h2>2. Choose a time</h2>
+      <div class="times" id="times"></div>
+    </div>
+
+    <form id="form" class="hidden" autocomplete="on">
+      <div class="pick" id="pick"></div>
+      <h2>3. Your details</h2>
+      <label for="name">Name</label>
+      <input id="name" name="name" required maxlength="100">
+      <label for="email">Email</label>
+      <input id="email" name="email" type="email" required maxlength="200">
+      <label for="topic">What would you like to discuss? (optional)</label>
+      <textarea id="topic" name="topic" maxlength="1000"></textarea>
+      <input class="hp" name="website" id="website" tabindex="-1" autocomplete="off">
+      <button class="btn" id="submit" type="submit">Request this time</button>
+      <div class="err" id="err"></div>
+    </form>
+  </div>
+
+  <div class="card done hidden" id="done">
+    <div class="tick">&#10003;</div>
+    <h1>Request sent</h1>
+    <p class="sub" id="doneText"></p>
+  </div>
+</div>
+
+<script>
+  const DATA = <?!= data ?>;
+  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  let byDay = {}, dayKeys = [], selected = null;
+
+  document.getElementById('title').textContent = 'Book a meeting with ' + DATA.ownerName;
+  document.getElementById('sub').textContent = DATA.slotMinutes + ' minutes. Times shown in your time zone (' + tz + '). Your request is confirmed after approval.';
+
+  function load() {
+    document.getElementById('loading').classList.remove('hidden');
+    document.getElementById('loading').textContent = 'Loading available times...';
+    google.script.run.withSuccessHandler(render).withFailureHandler(function (e) {
+      document.getElementById('loading').textContent = 'Could not load times right now. Please try again later.';
+    }).getSlots();
+  }
+
+  function dayKey(d) { return d.getFullYear() + '-' + (d.getMonth() + 1) + '-' + d.getDate(); }
+
+  function render(slots) {
+    byDay = {}; dayKeys = []; selected = null;
+    slots.forEach(function (s) {
+      const k = dayKey(new Date(s.start));
+      if (!byDay[k]) { byDay[k] = []; dayKeys.push(k); }
+      byDay[k].push(s);
+    });
+    document.getElementById('form').classList.add('hidden');
+    if (!dayKeys.length) {
+      document.getElementById('loading').textContent = 'No free times at the moment. Please check back later.';
+      document.getElementById('picker').classList.add('hidden');
+      return;
+    }
+    document.getElementById('loading').classList.add('hidden');
+    document.getElementById('picker').classList.remove('hidden');
+    const days = document.getElementById('days');
+    days.innerHTML = '';
+    dayKeys.forEach(function (k, i) {
+      const d = new Date(byDay[k][0].start);
+      const b = document.createElement('button');
+      b.type = 'button'; b.className = 'day';
+      b.innerHTML = '<small></small><b></b><small></small>';
+      b.children[0].textContent = d.toLocaleDateString(undefined, { weekday: 'short' });
+      b.children[1].textContent = d.getDate();
+      b.children[2].textContent = d.toLocaleDateString(undefined, { month: 'short' });
+      b.onclick = function () { showDay(k, b); };
+      days.appendChild(b);
+      if (i === 0) showDay(k, b);
+    });
+  }
+
+  function showDay(k, btn) {
+    document.querySelectorAll('.day').forEach(function (x) { x.classList.remove('on'); });
+    btn.classList.add('on');
+    const times = document.getElementById('times');
+    times.innerHTML = '';
+    byDay[k].forEach(function (s) {
+      const b = document.createElement('button');
+      b.type = 'button'; b.className = 'time';
+      b.textContent = new Date(s.start).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+      b.onclick = function () { pick(s, b); };
+      times.appendChild(b);
+    });
+  }
+
+  function pick(s, btn) {
+    selected = s;
+    document.querySelectorAll('.time').forEach(function (x) { x.classList.remove('on'); });
+    btn.classList.add('on');
+    const st = new Date(s.start), en = new Date(s.end);
+    document.getElementById('pick').textContent = 'Selected: ' +
+      st.toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' }) + ', ' +
+      st.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }) + ' - ' +
+      en.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+    document.getElementById('form').classList.remove('hidden');
+    document.getElementById('err').textContent = '';
+    document.getElementById('name').focus();
+  }
+
+  document.getElementById('form').addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    if (!selected) return;
+    const btn = document.getElementById('submit');
+    btn.disabled = true; btn.textContent = 'Sending...';
+    document.getElementById('err').textContent = '';
+    google.script.run
+      .withSuccessHandler(function (res) {
+        document.getElementById('main').classList.add('hidden');
+        document.getElementById('done').classList.remove('hidden');
+        document.getElementById('doneText').textContent =
+          'You will receive an email confirmation with the meeting link once ' + DATA.ownerName + ' approves your request.';
+      })
+      .withFailureHandler(function (e) {
+        btn.disabled = false; btn.textContent = 'Request this time';
+        const m = (e && e.message) || 'Something went wrong. Please try again.';
+        document.getElementById('err').textContent = m;
+        if (/taken/i.test(m)) load();
+      })
+      .submitBooking({
+        name: document.getElementById('name').value,
+        email: document.getElementById('email').value,
+        topic: document.getElementById('topic').value,
+        website: document.getElementById('website').value,
+        start: selected.start,
+        timezone: tz
+      });
+  });
+
+  if (DATA.paused) {
+    document.getElementById('sub').textContent = '';
+    document.getElementById('loading').textContent = DATA.pausedMessage;
+  } else {
+    load();
+  }
+</script>
+</body>
+</html>

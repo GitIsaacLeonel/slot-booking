@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <meta charset="utf-8">
+  <style>
+    :root { --bg:#f6f7fb; --card:#fff; --text:#1d1d24; --muted:#6b6b78; --line:#e4e5ec; --accent:#1f5eff; --teams:#5b5fc7; --ok:#1b8a4b; --err:#c62828; }
+    * { box-sizing:border-box; }
+    body { margin:0; background:var(--bg); color:var(--text); font:15px/1.5 "Segoe UI", system-ui, -apple-system, sans-serif; }
+    .wrap { max-width:560px; margin:0 auto; padding:32px 16px 48px; }
+    .card { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:24px; }
+    h1 { font-size:21px; margin:0 0 16px; }
+    dl { margin:0; display:grid; grid-template-columns:90px 1fr; gap:6px 12px; }
+    dt { color:var(--muted); }
+    dd { margin:0; white-space:pre-wrap; word-break:break-word; }
+    .actions { margin-top:24px; display:grid; gap:10px; }
+    button { padding:13px; border:0; border-radius:10px; font-weight:600; font-size:15px; font-family:inherit; cursor:pointer; color:#fff; }
+    button:disabled { opacity:.55; cursor:default; }
+    .meet { background:var(--accent); }
+    .teams { background:var(--teams); }
+    .zoom { background:#0b5cff; }
+    .reject { background:#f1f1f4; color:var(--text); }
+    .hl { outline:3px solid #ffc94d; outline-offset:2px; }
+    textarea { width:100%; min-height:70px; padding:10px 12px; border:1px solid var(--line); border-radius:8px; font:inherit; margin-top:6px; }
+    .note { font-size:13px; color:var(--muted); margin-top:16px; }
+    .status { margin-top:20px; padding:12px 14px; border-radius:10px; background:#f1f1f4; }
+    .status.ok { background:#e6f5ec; color:var(--ok); }
+    .status.err { background:#fdecec; color:var(--err); }
+    .status a { color:inherit; font-weight:600; word-break:break-all; }
+    .hidden { display:none; }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <div class="card">
+    <h1>Booking request</h1>
+    <dl>
+      <dt>Name</dt><dd id="n"></dd>
+      <dt>Email</dt><dd id="e"></dd>
+      <dt>When</dt><dd id="w"></dd>
+      <dt>Topic</dt><dd id="t"></dd>
+    </dl>
+
+    <div id="actions" class="actions hidden">
+      <button class="meet" id="bMeet">Approve with Google Meet</button>
+      <button class="teams hidden" id="bTeams">Approve with Microsoft Teams</button>
+      <button class="zoom hidden" id="bZoom">Approve with Zoom</button>
+      <div>
+        <label for="msg" style="font-size:13px;font-weight:600">Message to the guest if you reject (optional)</label>
+        <textarea id="msg" maxlength="1000" placeholder="e.g. Could we do next week instead?"></textarea>
+      </div>
+      <button class="reject" id="bReject">Reject</button>
+    </div>
+
+    <div id="status" class="status hidden"></div>
+    <p class="note">Nothing happens until you press a button, so link previews in your mail app cannot approve or reject by accident.</p>
+  </div>
+</div>
+
+<script>
+  const D = <?!= data ?>;
+  document.getElementById('n').textContent = D.name;
+  document.getElementById('e').textContent = D.email;
+  document.getElementById('w').textContent = D.when;
+  document.getElementById('t').textContent = D.topic || '-';
+
+  const status = document.getElementById('status');
+  function show(cls, html) { status.className = 'status ' + cls; status.innerHTML = html; }
+  function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+  const NAMES = { meet: 'Meet', teams: 'Teams', zoom: 'Zoom' };
+
+  if (D.status !== 'pending') {
+    let txt = 'This request is already <b>' + esc(D.status) + '</b>.';
+    if (D.status === 'approved' && D.link) txt += '<br>' + (NAMES[D.platform] || 'Meeting') + ' link: <a href="' + esc(D.link) + '">' + esc(D.link) + '</a>';
+    show(D.status === 'approved' ? 'ok' : '', txt);
+  } else {
+    document.getElementById('actions').classList.remove('hidden');
+    if (!D.meetEnabled) document.getElementById('bMeet').classList.add('hidden');
+    if (D.outlookEnabled) document.getElementById('bTeams').classList.remove('hidden');
+    if (D.zoomEnabled) document.getElementById('bZoom').classList.remove('hidden');
+    const map = { meet: 'bMeet', teams: 'bTeams', zoom: 'bZoom', reject: 'bReject' };
+    if (D.preselect && map[D.preselect]) document.getElementById(map[D.preselect]).classList.add('hl');
+  }
+
+  function busy(on) { document.querySelectorAll('button').forEach(function (b) { b.disabled = on; }); }
+  function fail(e) { busy(false); show('err', esc((e && e.message) || 'Something went wrong.')); }
+
+  function approve(platform) {
+    busy(true); show('', 'Creating the meeting and sending the invite...');
+    google.script.run.withSuccessHandler(function (r) {
+      document.getElementById('actions').classList.add('hidden');
+      show('ok', '<b>Approved.</b> ' + esc(D.name) + ' has been sent the invite and confirmation.' +
+        (r.link ? '<br>' + (NAMES[r.platform] || 'Meeting') + ' link:<a href="' + esc(r.link) + '">' + esc(r.link) + '</a>' : ''));
+    }).withFailureHandler(fail).approveRequest(D.id, D.token, platform);
+  }
+
+  document.getElementById('bMeet').onclick = function () { approve('meet'); };
+  document.getElementById('bTeams').onclick = function () { approve('teams'); };
+  document.getElementById('bZoom').onclick = function () { approve('zoom'); };
+  document.getElementById('bReject').onclick = function () {
+    busy(true); show('', 'Rejecting...');
+    google.script.run.withSuccessHandler(function () {
+      document.getElementById('actions').classList.add('hidden');
+      show('', '<b>Rejected.</b> The hold was removed from your calendar and ' + esc(D.name) + ' was notified.');
+    }).withFailureHandler(fail).rejectRequest(D.id, D.token, document.getElementById('msg').value);
+  };
+</script>
+</body>
+</html>
